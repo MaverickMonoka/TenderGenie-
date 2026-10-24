@@ -108,13 +108,7 @@ export default function TenderRadarPage() {
       const supabase = getSupabaseBrowserClient();
       const { error } = await supabase.from("tenders").update({ status: next, updated_at: new Date().toISOString() }).eq("id", tender.id).eq("company_id", companyId);
       if (error) throw error;
-      const { data: { user } } = await supabase.auth.getUser();
-      const { error: eventError } = await supabase.from("tender_events").insert({
-        company_id: companyId, tender_id: tender.id, actor_id: user?.id || null,
-        event_type: "status_changed", from_status: tender.status, to_status: next,
-        details: { source: "tender-radar-ui" },
-      });
-      if (eventError) throw eventError;
+      // Database trigger appends the lifecycle event in the same transaction.
       await loadTenders(companyId);
     } catch (e) { setNotice(e instanceof Error ? e.message : "Unable to change tender status."); }
   }
