@@ -31,7 +31,7 @@ export default function CompliancePage() {
     const [{data:t,error:te},{data:d,error:de},{data:c,error:ce}] = await Promise.all([
       supabase.from("tenders").select("id,title,company_id").eq("company_id",cid).order("closing_at",{ascending:true,nullsFirst:false}),
       supabase.from("documents").select("id,original_filename,document_type").eq("company_id",cid).order("created_at",{ascending:false}),
-      tid ? supabase.from("eligibility_checks").select("*").eq("company_id",cid).eq("tender_id",tid).order("checked_at",{ascending:false}) : Promise.resolve({data:[],error:null} as any),
+      tid ? supabase.from("eligibility_checks").select("*").eq("company_id",cid).eq("tender_id",tid).order("checked_at",{ascending:false}) : Promise.resolve({data: [] as Check[], error: null}),
     ]);
     if(te) throw te; if(de) throw de; if(ce) throw ce;
     setTenders((t||[]) as Tender[]); setDocs((d||[]) as DocumentRow[]); setChecks((c||[]) as Check[]);
