@@ -1,4 +1,5 @@
 import Link from "next/link";
+import SignOutButton from "@/components/SignOutButton";
 
 const modules = [
   { title: "Tender Radar", description: "Track opportunities, sources, eligibility and closing deadlines.", href: "/dashboard/tenders", label: "Open tender register" },
@@ -16,7 +17,7 @@ export default function Dashboard() {
       <p className="font-bold tracking-[0.2em] text-sky-300">TENDERGENIE / WORKSPACE</p>
       <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
         <div><h1 className="text-4xl font-black">Bid control centre</h1><p className="mt-2 text-slate-400">One workspace for discovery, compliance, pricing and bid governance.</p></div>
-        <Link href="/auth" className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold">Sign in / switch account</Link>
+        <SignOutButton />
       </div>
       <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{modules.map(m=><Link key={m.title} href={m.href} className="group rounded-2xl border border-slate-700 bg-slate-900/70 p-6 hover:border-sky-400 hover:bg-slate-900">
         <div className="flex items-start justify-between gap-3"><h2 className="text-xl font-bold">{m.title}</h2><span className="text-sky-300">↗</span></div>
