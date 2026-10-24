@@ -241,3 +241,30 @@ $$;
 drop trigger if exists submissions_guard_transition on public.submissions;
 create trigger submissions_guard_transition before insert or update on public.submissions
 for each row execute function public.guard_submission_transition();
+
+-- Allow designated managers to approve/lock proposals without permitting draft authors to self-approve.
+create policy "managers approve proposals" on public.proposals for update to authenticated
+using (public.has_company_role(company_id,array['owner','admin','tender_manager']) and status in ('internal_review','approved','locked'))
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager']) and status in ('approved','locked','superseded'));
+
+create or replace function public.guard_proposal_approval()
+returns trigger language plpgsql set search_path = ''
+as $$
+begin
+ if new.status in ('approved','locked') and old.status not in ('approved','locked') then
+   if new.approved_by is null or new.approved_at is null then
+     raise exception 'Proposal approval requires an approver and timestamp.';
+   end if;
+ end if;
+ if new.status = 'locked' and new.locked_at is null then
+   raise exception 'Locking a proposal requires a locked timestamp.';
+ end if;
+ if old.status = 'locked' and new.status <> 'locked' then
+   raise exception 'Locked proposals are immutable; create a new version.';
+ end if;
+ return new;
+end;
+$$;
+drop trigger if exists proposals_guard_approval on public.proposals;
+create trigger proposals_guard_approval before update on public.proposals
+for each row execute function public.guard_proposal_approval();
