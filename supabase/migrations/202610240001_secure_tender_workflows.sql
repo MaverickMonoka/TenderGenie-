@@ -205,7 +205,9 @@ create policy "company members read company" on public.companies for select to a
 create policy "authenticated users create company" on public.companies for insert to authenticated with check (created_by = (select auth.uid()));
 create policy "company admins update company" on public.companies for update to authenticated using (public.has_company_role(id,array['owner','admin'])) with check (public.has_company_role(id,array['owner','admin']));
 create policy "members read memberships" on public.company_members for select to authenticated using (public.is_company_member(company_id));
-create policy "admins manage memberships" on public.company_members for all to authenticated using (public.has_company_role(company_id,array['owner','admin'])) with check (public.has_company_role(company_id,array['owner','admin']));
+create policy "admins insert memberships" on public.company_members for insert to authenticated with check (public.has_company_role(company_id,array['owner','admin']));
+create policy "admins update memberships" on public.company_members for update to authenticated using (public.has_company_role(company_id,array['owner','admin'])) with check (public.has_company_role(company_id,array['owner','admin']));
+create policy "admins delete memberships" on public.company_members for delete to authenticated using (public.has_company_role(company_id,array['owner','admin']));
 create policy "members manage tenders" on public.tenders for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id));
 create policy "members manage eligibility" on public.eligibility_checks for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id));
 create policy "members manage documents" on public.documents for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id) and uploaded_by = (select auth.uid()));
@@ -218,7 +220,7 @@ create policy "members manage boq projects" on public.boq_projects for all to au
 create policy "members manage boq items" on public.boq_items for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id));
 create policy "members read proposals" on public.proposals for select to authenticated using (public.is_company_member(company_id));
 create policy "authors create draft proposals" on public.proposals for insert to authenticated with check (public.is_company_member(company_id) and created_by = (select auth.uid()) and status = 'draft');
-create policy "authors update draft proposals" on public.proposals for update to authenticated using (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and status in ('draft','internal_review')) with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and status in ('draft','internal_review'));
+-- Proposal update policy is consolidated with manager approval permissions below.
 create policy "members read submissions" on public.submissions for select to authenticated using (public.is_company_member(company_id));
 create policy "managers create submissions" on public.submissions for insert to authenticated with check (public.has_company_role(company_id,array['owner','admin','tender_manager']) and status = 'pending_approval');
 create policy "managers update submissions" on public.submissions for update to authenticated using (public.has_company_role(company_id,array['owner','admin','tender_manager'])) with check (public.has_company_role(company_id,array['owner','admin','tender_manager']));
@@ -308,9 +310,17 @@ create trigger submissions_guard_transition before insert or update on public.su
 for each row execute function public.guard_submission_transition();
 
 -- Allow designated managers to approve/lock proposals without permitting draft authors to self-approve.
-create policy "managers approve proposals" on public.proposals for update to authenticated
-using (public.has_company_role(company_id,array['owner','admin','tender_manager']) and status in ('internal_review','approved','locked'))
-with check (public.has_company_role(company_id,array['owner','admin','tender_manager']) and status in ('approved','locked','superseded'));
+drop policy if exists "authors update draft proposals" on public.proposals;
+drop policy if exists "managers approve proposals" on public.proposals;
+create policy "authorized proposal workflow updates" on public.proposals for update to authenticated
+using (
+  (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and status in ('draft','internal_review'))
+  or (public.has_company_role(company_id,array['owner','admin','tender_manager']) and status in ('internal_review','approved','locked'))
+)
+with check (
+  (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and status in ('draft','internal_review'))
+  or (public.has_company_role(company_id,array['owner','admin','tender_manager']) and status in ('approved','locked','superseded'))
+);
 
 create or replace function public.guard_proposal_approval()
 returns trigger language plpgsql set search_path = ''
