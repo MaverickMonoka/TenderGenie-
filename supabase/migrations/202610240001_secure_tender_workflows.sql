@@ -432,3 +432,52 @@ with check (public.is_company_member(company_id) and uploaded_by = (select auth.
 create policy "uploaders update document metadata" on public.documents for update to authenticated
 using (public.is_company_member(company_id) and uploaded_by = (select auth.uid()))
 with check (public.is_company_member(company_id) and uploaded_by = (select auth.uid()));
+
+-- Apply role-aware write access to tender and estimating records. Existing permissive policies are removed first.
+drop policy if exists "members manage tenders" on public.tenders;
+create policy "members read tenders" on public.tenders for select to authenticated
+using (public.is_company_member(company_id));
+create policy "tender managers create tenders" on public.tenders for insert to authenticated
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager']) and created_by = (select auth.uid()));
+create policy "tender managers update tenders" on public.tenders for update to authenticated
+using (public.has_company_role(company_id,array['owner','admin','tender_manager']))
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager']));
+create policy "company admins delete tenders" on public.tenders for delete to authenticated
+using (public.has_company_role(company_id,array['owner','admin']));
+
+drop policy if exists "members manage eligibility" on public.eligibility_checks;
+create policy "members read eligibility" on public.eligibility_checks for select to authenticated
+using (public.is_company_member(company_id));
+create policy "estimators record eligibility" on public.eligibility_checks for insert to authenticated
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and checked_by = (select auth.uid()));
+create policy "estimators update eligibility" on public.eligibility_checks for update to authenticated
+using (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']))
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and checked_by = (select auth.uid()));
+create policy "admins delete eligibility" on public.eligibility_checks for delete to authenticated
+using (public.has_company_role(company_id,array['owner','admin']));
+
+drop policy if exists "members manage boq projects" on public.boq_projects;
+create policy "members read boq projects" on public.boq_projects for select to authenticated
+using (public.is_company_member(company_id));
+create policy "estimators create boq projects" on public.boq_projects for insert to authenticated
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and created_by = (select auth.uid()));
+create policy "estimators update boq projects" on public.boq_projects for update to authenticated
+using (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']))
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']));
+create policy "admins delete boq projects" on public.boq_projects for delete to authenticated
+using (public.has_company_role(company_id,array['owner','admin']));
+
+drop policy if exists "members manage boq items" on public.boq_items;
+create policy "members read boq items" on public.boq_items for select to authenticated
+using (public.is_company_member(company_id));
+create policy "estimators create boq items" on public.boq_items for insert to authenticated
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']));
+create policy "estimators update boq items" on public.boq_items for update to authenticated
+using (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']))
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']));
+create policy "admins delete boq items" on public.boq_items for delete to authenticated
+using (public.has_company_role(company_id,array['owner','admin']));
+
+drop policy if exists "authors create draft proposals" on public.proposals;
+create policy "estimators create draft proposals" on public.proposals for insert to authenticated
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and created_by = (select auth.uid()) and status = 'draft');
