@@ -268,3 +268,37 @@ $$;
 drop trigger if exists proposals_guard_approval on public.proposals;
 create trigger proposals_guard_approval before update on public.proposals
 for each row execute function public.guard_proposal_approval();
+
+-- Automatically append tender lifecycle events inside the same transaction as each state change.
+create or replace function public.log_tender_lifecycle_event()
+returns trigger language plpgsql security definer set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' then
+    insert into public.tender_events(company_id,tender_id,actor_id,event_type,from_status,to_status,details)
+    values (new.company_id,new.id,(select auth.uid()),'tender_created',null,new.status,
+      jsonb_build_object('source_name',new.source_name,'reference_number',new.reference_number));
+    return new;
+  end if;
+  if new.status is distinct from old.status then
+    insert into public.tender_events(company_id,tender_id,actor_id,event_type,from_status,to_status,details)
+    values (new.company_id,new.id,(select auth.uid()),'status_changed',old.status,new.status,'{}'::jsonb);
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists tenders_log_lifecycle on public.tenders;
+create trigger tenders_log_lifecycle after insert or update of status on public.tenders
+for each row execute function public.log_tender_lifecycle_event();
+
+-- Prevent ordinary authenticated clients from altering or deleting existing audit history.
+create or replace function public.prevent_tender_event_mutation()
+returns trigger language plpgsql set search_path = ''
+as $$
+begin
+  raise exception 'Tender event history is append-only.';
+end;
+$$;
+drop trigger if exists tender_events_immutable on public.tender_events;
+create trigger tender_events_immutable before update or delete on public.tender_events
+for each row execute function public.prevent_tender_event_mutation();
