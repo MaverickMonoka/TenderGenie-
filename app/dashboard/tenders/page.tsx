@@ -42,8 +42,6 @@ export default function TenderRadarPage() {
   const [notice, setNotice] = useState("");
   const [now, setNow] = useState<number | null>(null);
 
-  useEffect(() => { setNow(Date.now()); }, []);
-
   async function loadTenders(id: string) {
     const supabase = getSupabaseBrowserClient();
     const { data, error } = await supabase.from("tenders").select("*").eq("company_id", id).order("closing_at", { ascending: true, nullsFirst: false }).limit(250);
@@ -57,6 +55,7 @@ export default function TenderRadarPage() {
       try {
         const supabase = getSupabaseBrowserClient();
         const { data: { user } } = await supabase.auth.getUser();
+        setNow(Date.now());
         if (!user) { router.replace("/auth"); return; }
         const { data, error } = await supabase.from("companies").select("id,name,province,service_categories,cidb_categories,cidb_grade,csd_number,registration_number").order("created_at", { ascending: true });
         if (error) throw error;
