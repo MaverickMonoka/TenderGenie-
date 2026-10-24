@@ -10,12 +10,13 @@ Africa's Tender Intelligence & Procurement Network for construction tender teams
 - **PDF extraction:** user-triggered server-side OpenAI extraction endpoint; extracted fields remain marked `needs_review` and must be checked against the source PDF.
 - **Tender Radar:** manual opportunity register, closing/clarification deadlines, lifecycle status, preliminary category/province fit indicators and event audit trail.
 - **Compliance:** human-reviewed pass/fail/review criteria linked to stored evidence.
-- **QS estimator:** editable component rates and quantities, persistent BOQ projects, calculated line amounts and source notes. User-entered rates are assumptions, not verified market prices.
+- **Construction rate library:** store ZAR rates with source references, validity dates, supporting documents and assumptions.
+- **QS estimator:** editable component rates and quantities, persistent BOQ projects, calculated line amounts, source notes and variance flags against exact matching composite rates. User-entered rates are assumptions, not verified market prices.
 - **Proposal controls:** draft versions, internal review, manager approval/locking and manual submission/receipt tracking.
 
 ## Architecture
 
-Next.js 14 App Router, TypeScript, Supabase Auth/Postgres/Storage and server-side OpenAI API calls. No service-role key is required by the current browser workflows. The OpenAI key is server-only.
+Next.js 16 App Router, TypeScript, Supabase Auth/Postgres/Storage and server-side OpenAI API calls. No service-role key is required by the current browser workflows. The OpenAI key is server-only.
 
 ## Configure locally / deploy
 
