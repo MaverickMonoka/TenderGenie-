@@ -105,6 +105,45 @@ create table if not exists public.tender_events (
  event_type text not null, from_status text, to_status text, details jsonb not null default '{}'::jsonb,
  created_at timestamptz not null default now()
 );
+
+-- Compatibility bridge for the pre-existing TenderGenie schema. These tables already
+-- exist in production with legacy columns/types, so evolve them additively instead
+-- of relying on CREATE TABLE IF NOT EXISTS to replace their structure.
+alter table public.companies
+  add column if not exists service_categories text[] not null default '{}',
+  add column if not exists cidb_categories text[] not null default '{}',
+  add column if not exists cidb_grade text;
+alter table public.company_members
+  add column if not exists updated_at timestamptz not null default now();
+create unique index if not exists company_members_company_user_unique
+  on public.company_members(company_id,user_id);
+alter table public.tenders
+  add column if not exists source_name text not null default 'Manual entry',
+  add column if not exists reference_number text,
+  add column if not exists buyer_name text,
+  add column if not exists categories text[] not null default '{}',
+  add column if not exists published_at timestamptz,
+  add column if not exists clarification_deadline timestamptz,
+  add column if not exists estimated_value numeric(16,2),
+  add column if not exists source_snapshot jsonb not null default '{}'::jsonb;
+alter table public.proposals
+  add column if not exists boq_project_id uuid,
+  add column if not exists content jsonb not null default '{}'::jsonb,
+  add column if not exists generated_document_id uuid,
+  add column if not exists approved_by uuid,
+  add column if not exists approved_at timestamptz,
+  add column if not exists locked_at timestamptz;
+alter table public.boq_items
+  add column if not exists boq_project_id uuid,
+  add column if not exists item_number text,
+  add column if not exists rate_id uuid,
+  add column if not exists rate_source_id uuid,
+  add column if not exists unit_rate numeric(16,4) not null default 0,
+  add column if not exists rate_basis text not null default 'estimator_assumption',
+  add column if not exists rate_note text,
+  add column if not exists calculated_amount numeric(18,2)
+    generated always as (round(quantity * unit_rate, 2)) stored;
+
 create index if not exists tenders_company_status_closing_idx on public.tenders(company_id,status,closing_at);
 create index if not exists documents_company_tender_idx on public.documents(company_id,tender_id,created_at desc);
 create index if not exists rates_company_trade_region_idx on public.construction_rates(company_id,trade,region,effective_from desc);
@@ -116,7 +155,7 @@ returns boolean language sql stable security definer set search_path = ''
 as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid())); $$;
 create or replace function public.has_company_role(target_company uuid, allowed_roles text[])
 returns boolean language sql stable security definer set search_path = ''
-as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid()) and m.role = any(allowed_roles)); $$;
+as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid()) and m.role::text = any(allowed_roles)); $$;
 create or replace function public.add_company_creator_as_owner()
 returns trigger language plpgsql security definer set search_path = ''
 as $$ begin insert into public.company_members(company_id,user_id,role) values (new.id,new.created_by,'owner') on conflict do nothing; return new; end; $$;
@@ -135,6 +174,28 @@ alter table public.boq_items enable row level security;
 alter table public.proposals enable row level security;
 alter table public.submissions enable row level security;
 alter table public.tender_events enable row level security;
+
+
+-- Remove permissive legacy policies before installing role-aware equivalents.
+drop policy if exists "companies_select_member" on public.companies;
+drop policy if exists "companies_insert_authenticated" on public.companies;
+drop policy if exists "companies_update_admin" on public.companies;
+drop policy if exists "company_members_select" on public.company_members;
+drop policy if exists "company_members_insert_admin" on public.company_members;
+drop policy if exists "company_members_update_admin" on public.company_members;
+drop policy if exists "company_members_delete_owner" on public.company_members;
+drop policy if exists "tenders_select_member" on public.tenders;
+drop policy if exists "tenders_insert_member" on public.tenders;
+drop policy if exists "tenders_update_member" on public.tenders;
+drop policy if exists "tenders_delete_admin" on public.tenders;
+drop policy if exists "proposals_select_member" on public.proposals;
+drop policy if exists "proposals_insert_member" on public.proposals;
+drop policy if exists "proposals_update_member" on public.proposals;
+drop policy if exists "proposals_delete_admin" on public.proposals;
+drop policy if exists "boq_select_member" on public.boq_items;
+drop policy if exists "boq_insert_member" on public.boq_items;
+drop policy if exists "boq_update_member" on public.boq_items;
+drop policy if exists "boq_delete_member" on public.boq_items;
 
 create policy "company members read company" on public.companies for select to authenticated using (public.is_company_member(id));
 create policy "authenticated users create company" on public.companies for insert to authenticated with check (created_by = (select auth.uid()));
