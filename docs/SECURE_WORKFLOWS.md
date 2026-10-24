@@ -18,8 +18,8 @@ This branch introduces the first database foundation for TenderGenie's productio
 6. Keep files in the private tender-documents bucket under <company-uuid>/<opaque-file-key>. Issue short-lived signed URLs only after server-side authorization.
 
 ## Apply and validate
-- Review this migration in a non-production Supabase project first.
-- Apply with the Supabase CLI or migration workflow, then run database lint and tests where configured.
+- Apply all timestamped SQL migrations in `supabase/migrations` in order, first in a non-production Supabase project.
+- Enable `pgtap` in the test project before running `supabase test db`; run database security/performance advisors after migration.
 - Configure Auth redirect URLs and email delivery; never commit service-role secrets.
 - Add RLS tests for cross-company access, private Storage, role boundaries, submission approval and audit immutability.
 - Run end-to-end tests covering registration, company creation, file upload, extraction review, eligibility, rates/BOQ, proposal approval, submission receipt and lifecycle close-out.
