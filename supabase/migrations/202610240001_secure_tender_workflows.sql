@@ -143,6 +143,7 @@ alter table public.boq_items
   add column if not exists rate_note text,
   add column if not exists calculated_amount numeric(18,2)
     generated always as (round(quantity * unit_rate, 2)) stored;
+alter table public.boq_items add column if not exists tender_id uuid references public.tenders(id) on delete set null;
 alter table public.boq_items alter column tender_id drop not null;
 create unique index if not exists tenders_company_source_reference_unique
   on public.tenders(company_id,source_name,reference_number);
