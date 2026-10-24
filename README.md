@@ -27,8 +27,8 @@ Next.js 16 App Router, TypeScript, Supabase Auth/Postgres/Storage and server-sid
    - `OPENAI_API_KEY` for PDF extraction
    - optionally `OPENAI_DOCUMENT_MODEL`
 3. Configure Supabase Auth email confirmation and allowed redirect URLs for your deployed domain.
-4. Review and apply `supabase/migrations/202610240001_secure_tender_workflows.sql` in a **non-production** Supabase project first.
-5. Run `supabase test db` for the schema smoke tests after the migration is applied.
+4. Apply all SQL migrations in `supabase/migrations` in timestamp order in a **non-production** Supabase project first. The workflow foundation includes enum compatibility, schema/security policies, trigger-function privilege hardening, foreign-key indexes and policy consolidation.
+5. Enable the `pgtap` extension in the test project, then run `supabase test db` for the schema smoke tests.
 6. Run `npm run build` and complete the manual acceptance checks below before production deployment.
 
 Never commit API keys, service-role credentials, passwords, real company documents or production data.
