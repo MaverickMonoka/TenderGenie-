@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type Company = { id: string; name: string };
-type StoredDocument = { id: string; original_filename: string; document_type: string; byte_size: number; extraction_status: string; created_at: string };
+type StoredDocument = { id: string; original_filename: string; document_type: string; mime_type: string; byte_size: number; extraction_status: string; extracted_fields: Record<string, unknown> | null; created_at: string };
 
 const allowedTypes = new Set([
   "application/pdf",
@@ -30,11 +30,12 @@ export default function DocumentsPage() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
+  const [expandedDocument, setExpandedDocument] = useState<string | null>(null);
 
   async function refresh(company: string) {
     const supabase = getSupabaseBrowserClient();
     const { data, error } = await supabase.from("documents")
-      .select("id,original_filename,document_type,byte_size,extraction_status,created_at")
+      .select("id,original_filename,document_type,mime_type,byte_size,extraction_status,extracted_fields,created_at")
       .eq("company_id", company).order("created_at", { ascending: false }).limit(100);
     if (error) throw error;
     setDocuments((data || []) as StoredDocument[]);
@@ -136,6 +137,28 @@ export default function DocumentsPage() {
     }
   }
 
+  async function runExtraction(id: string) {
+    setNotice("");
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Sign in again to continue.");
+      const response = await fetch("/api/documents/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ documentId: id }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "PDF extraction failed.");
+      await refresh(companyId);
+      setExpandedDocument(id);
+      setNotice("PDF extraction completed and marked for human review. Verify every field against the original document.");
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Unable to extract PDF fields.");
+      try { await refresh(companyId); } catch { /* preserve the primary error */ }
+    }
+  }
+
   async function download(id: string) {
     try {
       const supabase = getSupabaseBrowserClient();
@@ -180,7 +203,12 @@ export default function DocumentsPage() {
         {notice && <p role="status" className="mt-4 rounded-lg border border-slate-700 bg-slate-900 p-3 text-sm text-slate-200">{notice}</p>}
         <section className="mt-8 overflow-hidden rounded-2xl border border-slate-700">
           <div className="flex items-center justify-between bg-slate-900 px-5 py-4"><h2 className="font-bold">Stored documents</h2><span className="text-sm text-slate-400">{documents.length} shown</span></div>
-          {documents.length === 0 ? <p className="p-6 text-slate-400">No documents uploaded for this company yet.</p> : <div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left text-sm"><thead className="bg-slate-950 text-slate-400"><tr><th className="p-4">File</th><th className="p-4">Type</th><th className="p-4">Size</th><th className="p-4">Extraction</th><th className="p-4">Access</th></tr></thead><tbody>{documents.map(d=><tr key={d.id} className="border-t border-slate-800"><td className="max-w-xs truncate p-4 font-semibold">{d.original_filename}</td><td className="p-4">{d.document_type.replaceAll("_"," ")}</td><td className="p-4">{(d.byte_size/1024/1024).toFixed(2)} MB</td><td className="p-4"><span className="rounded-full bg-slate-800 px-2 py-1">{d.extraction_status}</span></td><td className="p-4"><button onClick={()=>download(d.id)} className="font-semibold text-sky-300 underline">Secure download</button></td></tr>)}</tbody></table></div>}
+          {documents.length === 0 ? <p className="p-6 text-slate-400">No documents uploaded for this company yet.</p> : <div className="divide-y divide-slate-800">{documents.map(d=><article key={d.id} className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><h3 className="break-words font-semibold">{d.original_filename}</h3><p className="mt-1 text-sm text-slate-400">{d.document_type.replaceAll("_"," ")} · {(d.byte_size/1024/1024).toFixed(2)} MB</p><p className="mt-2 text-xs text-slate-500">Extraction status: {d.extraction_status}</p></div>
+              <div className="flex flex-wrap gap-3"><button onClick={()=>download(d.id)} className="font-semibold text-sky-300 underline">Secure download</button>{d.mime_type==="application/pdf"&&<button disabled={busy||d.extraction_status==="processing"} onClick={()=>runExtraction(d.id)} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold disabled:opacity-50">{d.extraction_status==="processing"?"Extracting…":"Extract PDF with AI"}</button>}{d.extracted_fields&&<button onClick={()=>setExpandedDocument(expandedDocument===d.id?null:d.id)} className="font-semibold text-sky-300 underline">{expandedDocument===d.id?"Hide extracted fields":"Review extracted fields"}</button>}</div>
+            </div>
+            {expandedDocument===d.id&&d.extracted_fields&&<pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-slate-700 bg-slate-950 p-4 text-xs leading-5 text-slate-300">{JSON.stringify(d.extracted_fields,null,2)}</pre>}
+          </article>)}</div>}
         </section>
       </>}
     </div>
