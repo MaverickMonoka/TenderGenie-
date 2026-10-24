@@ -1,0 +1,168 @@
+-- TenderGenie core tenancy and tender lifecycle schema
+-- Apply with Supabase CLI after reviewing against the target project.
+create extension if not exists pgcrypto;
+create table if not exists public.companies (
+ id uuid primary key default gen_random_uuid(), name text not null check (length(trim(name)) between 2 and 180),
+ registration_number text, tax_number text, cidb_grade text, cidb_categories text[] not null default '{}',
+ csd_number text, province text, service_categories text[] not null default '{}',
+ created_by uuid not null references auth.users(id) on delete restrict,
+ created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+create table if not exists public.company_members (
+ company_id uuid not null references public.companies(id) on delete cascade,
+ user_id uuid not null references auth.users(id) on delete cascade,
+ role text not null default 'estimator' check (role in ('owner','admin','tender_manager','estimator','viewer')),
+ created_at timestamptz not null default now(), primary key (company_id,user_id)
+);
+create table if not exists public.tenders (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ source_name text not null, source_url text, reference_number text, title text not null, buyer_name text, description text,
+ province text, categories text[] not null default '{}', published_at timestamptz, clarification_deadline timestamptz,
+ closing_at timestamptz, estimated_value numeric(16,2) check (estimated_value is null or estimated_value >= 0),
+ status text not null default 'discovered' check (status in ('discovered','screening','qualified','no_bid','bid_approved','estimating','compliance','proposal','ready_for_approval','submitted','awarded','unsuccessful','cancelled','closed')),
+ source_snapshot jsonb not null default '{}'::jsonb, created_by uuid not null references auth.users(id) on delete restrict,
+ created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+ unique (company_id,source_name,reference_number)
+);
+create table if not exists public.documents (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ tender_id uuid references public.tenders(id) on delete set null, storage_path text not null unique,
+ original_filename text not null, mime_type text not null, byte_size bigint not null check (byte_size > 0),
+ sha256 text, document_type text not null default 'other',
+ extraction_status text not null default 'pending' check (extraction_status in ('pending','processing','complete','failed','needs_review')),
+ extracted_text text, extracted_fields jsonb not null default '{}'::jsonb,
+ uploaded_by uuid not null references auth.users(id) on delete restrict, created_at timestamptz not null default now()
+);
+create table if not exists public.eligibility_checks (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ tender_id uuid not null references public.tenders(id) on delete cascade, criterion text not null,
+ result text not null check (result in ('pass','fail','review','unknown')),
+ evidence_document_id uuid references public.documents(id) on delete set null, explanation text not null,
+ checked_by uuid references auth.users(id) on delete set null, checked_at timestamptz not null default now()
+);
+create table if not exists public.rate_sources (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ source_type text not null check (source_type in ('supplier_quote','historical_actual','published_schedule','internal_rate','estimator_assumption','subcontractor_quote')),
+ source_name text not null, source_reference text, source_date date, valid_until date,
+ document_id uuid references public.documents(id) on delete set null, verified_by uuid references auth.users(id) on delete set null,
+ verified_at timestamptz, notes text, created_by uuid not null references auth.users(id) on delete restrict,
+ created_at timestamptz not null default now(), check (valid_until is null or source_date is null or valid_until >= source_date)
+);
+create table if not exists public.construction_rates (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ rate_source_id uuid not null references public.rate_sources(id) on delete restrict, item_code text, description text not null,
+ trade text not null, unit text not null, rate_type text not null check (rate_type in ('material','labour','plant','subcontract','composite')),
+ unit_rate numeric(16,4) not null check (unit_rate >= 0), currency text not null default 'ZAR' check (currency = 'ZAR'),
+ region text, effective_from date not null default current_date, effective_to date, assumptions text,
+ created_by uuid not null references auth.users(id) on delete restrict, created_at timestamptz not null default now(),
+ check (effective_to is null or effective_to >= effective_from)
+);
+create table if not exists public.boq_projects (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ tender_id uuid references public.tenders(id) on delete set null, name text not null,
+ revision integer not null default 1 check (revision > 0), status text not null default 'draft' check (status in ('draft','review','approved','superseded')),
+ preliminaries numeric(16,2) not null default 0 check (preliminaries >= 0),
+ contingency_percent numeric(6,3) not null default 0 check (contingency_percent between 0 and 100),
+ markup_percent numeric(6,3) not null default 0 check (markup_percent between 0 and 100),
+ created_by uuid not null references auth.users(id) on delete restrict, approved_by uuid references auth.users(id) on delete set null,
+ approved_at timestamptz, created_at timestamptz not null default now(), unique (company_id,tender_id,name,revision)
+);
+create table if not exists public.boq_items (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ boq_project_id uuid not null references public.boq_projects(id) on delete cascade, item_number text not null,
+ description text not null, unit text not null, quantity numeric(16,4) not null check (quantity >= 0),
+ rate_id uuid references public.construction_rates(id) on delete restrict,
+ rate_source_id uuid references public.rate_sources(id) on delete restrict,
+ unit_rate numeric(16,4) not null check (unit_rate >= 0),
+ rate_basis text not null check (rate_basis in ('approved_rate','supplier_quote','historical_actual','published_schedule','estimator_assumption','manual_override')),
+ rate_note text, calculated_amount numeric(18,2) generated always as (round(quantity * unit_rate, 2)) stored,
+ created_at timestamptz not null default now(), unique (boq_project_id,item_number),
+ check (rate_basis <> 'estimator_assumption' or length(trim(coalesce(rate_note,''))) > 0),
+ check (rate_basis <> 'manual_override' or length(trim(coalesce(rate_note,''))) > 0)
+);
+create table if not exists public.proposals (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ tender_id uuid not null references public.tenders(id) on delete cascade, boq_project_id uuid references public.boq_projects(id) on delete set null,
+ version integer not null default 1 check (version > 0),
+ status text not null default 'draft' check (status in ('draft','internal_review','approved','locked','superseded')),
+ title text not null, content jsonb not null default '{}'::jsonb, generated_document_id uuid references public.documents(id) on delete set null,
+ created_by uuid not null references auth.users(id) on delete restrict, approved_by uuid references auth.users(id) on delete set null,
+ approved_at timestamptz, locked_at timestamptz, created_at timestamptz not null default now(), unique (tender_id,version)
+);
+create table if not exists public.submissions (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ tender_id uuid not null references public.tenders(id) on delete cascade, proposal_id uuid not null references public.proposals(id) on delete restrict,
+ status text not null default 'pending_approval' check (status in ('pending_approval','approved_to_submit','submitted','receipt_confirmed','rejected','withdrawn')),
+ submission_method text, destination text, approved_by uuid references auth.users(id) on delete set null, approved_at timestamptz,
+ submitted_by uuid references auth.users(id) on delete set null, submitted_at timestamptz, receipt_reference text,
+ receipt_document_id uuid references public.documents(id) on delete set null, submission_notes text, created_at timestamptz not null default now(),
+ check (status not in ('submitted','receipt_confirmed') or (submitted_at is not null and submitted_by is not null)),
+ check (status <> 'approved_to_submit' or (approved_at is not null and approved_by is not null))
+);
+create table if not exists public.tender_events (
+ id uuid primary key default gen_random_uuid(), company_id uuid not null references public.companies(id) on delete cascade,
+ tender_id uuid not null references public.tenders(id) on delete cascade, actor_id uuid references auth.users(id) on delete set null,
+ event_type text not null, from_status text, to_status text, details jsonb not null default '{}'::jsonb,
+ created_at timestamptz not null default now()
+);
+create index if not exists tenders_company_status_closing_idx on public.tenders(company_id,status,closing_at);
+create index if not exists documents_company_tender_idx on public.documents(company_id,tender_id,created_at desc);
+create index if not exists rates_company_trade_region_idx on public.construction_rates(company_id,trade,region,effective_from desc);
+create index if not exists boq_items_project_idx on public.boq_items(boq_project_id);
+create index if not exists tender_events_tender_idx on public.tender_events(tender_id,created_at desc);
+
+create or replace function public.is_company_member(target_company uuid)
+returns boolean language sql stable security definer set search_path = ''
+as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid())); $$;
+create or replace function public.has_company_role(target_company uuid, allowed_roles text[])
+returns boolean language sql stable security definer set search_path = ''
+as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid()) and m.role = any(allowed_roles)); $$;
+create or replace function public.add_company_creator_as_owner()
+returns trigger language plpgsql security definer set search_path = ''
+as $$ begin insert into public.company_members(company_id,user_id,role) values (new.id,new.created_by,'owner') on conflict do nothing; return new; end; $$;
+drop trigger if exists companies_add_creator on public.companies;
+create trigger companies_add_creator after insert on public.companies for each row execute function public.add_company_creator_as_owner();
+
+alter table public.companies enable row level security;
+alter table public.company_members enable row level security;
+alter table public.tenders enable row level security;
+alter table public.eligibility_checks enable row level security;
+alter table public.documents enable row level security;
+alter table public.rate_sources enable row level security;
+alter table public.construction_rates enable row level security;
+alter table public.boq_projects enable row level security;
+alter table public.boq_items enable row level security;
+alter table public.proposals enable row level security;
+alter table public.submissions enable row level security;
+alter table public.tender_events enable row level security;
+
+create policy "company members read company" on public.companies for select to authenticated using (public.is_company_member(id));
+create policy "authenticated users create company" on public.companies for insert to authenticated with check (created_by = (select auth.uid()));
+create policy "company admins update company" on public.companies for update to authenticated using (public.has_company_role(id,array['owner','admin'])) with check (public.has_company_role(id,array['owner','admin']));
+create policy "members read memberships" on public.company_members for select to authenticated using (public.is_company_member(company_id));
+create policy "admins manage memberships" on public.company_members for all to authenticated using (public.has_company_role(company_id,array['owner','admin'])) with check (public.has_company_role(company_id,array['owner','admin']));
+create policy "members manage tenders" on public.tenders for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id));
+create policy "members manage eligibility" on public.eligibility_checks for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id));
+create policy "members manage documents" on public.documents for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id) and uploaded_by = (select auth.uid()));
+create policy "members read rate sources" on public.rate_sources for select to authenticated using (public.is_company_member(company_id));
+create policy "estimators insert rate sources" on public.rate_sources for insert to authenticated with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and created_by = (select auth.uid()));
+create policy "estimators update rate sources" on public.rate_sources for update to authenticated using (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator'])) with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']));
+create policy "members read construction rates" on public.construction_rates for select to authenticated using (public.is_company_member(company_id));
+create policy "estimators manage construction rates" on public.construction_rates for all to authenticated using (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator'])) with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and created_by = (select auth.uid()));
+create policy "members manage boq projects" on public.boq_projects for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id) and created_by = (select auth.uid()));
+create policy "members manage boq items" on public.boq_items for all to authenticated using (public.is_company_member(company_id)) with check (public.is_company_member(company_id));
+create policy "members read proposals" on public.proposals for select to authenticated using (public.is_company_member(company_id));
+create policy "authors create draft proposals" on public.proposals for insert to authenticated with check (public.is_company_member(company_id) and created_by = (select auth.uid()) and status = 'draft');
+create policy "authors update draft proposals" on public.proposals for update to authenticated using (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and status in ('draft','internal_review')) with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and status in ('draft','internal_review'));
+create policy "members read submissions" on public.submissions for select to authenticated using (public.is_company_member(company_id));
+create policy "managers create submissions" on public.submissions for insert to authenticated with check (public.has_company_role(company_id,array['owner','admin','tender_manager']) and status = 'pending_approval');
+create policy "managers update submissions" on public.submissions for update to authenticated using (public.has_company_role(company_id,array['owner','admin','tender_manager'])) with check (public.has_company_role(company_id,array['owner','admin','tender_manager']));
+create policy "members read tender events" on public.tender_events for select to authenticated using (public.is_company_member(company_id));
+create policy "members append tender events" on public.tender_events for insert to authenticated with check (public.is_company_member(company_id) and actor_id = (select auth.uid()));
+
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values ('tender-documents','tender-documents',false,26214400,array['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','image/png','image/jpeg','text/plain'])
+on conflict (id) do update set public=false,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
+create policy "company members read private tender files" on storage.objects for select to authenticated using (bucket_id='tender-documents' and public.is_company_member(((storage.foldername(name))[1])::uuid));
+create policy "company members upload private tender files" on storage.objects for insert to authenticated with check (bucket_id='tender-documents' and public.is_company_member(((storage.foldername(name))[1])::uuid));
+create policy "company admins delete private tender files" on storage.objects for delete to authenticated using (bucket_id='tender-documents' and public.has_company_role(((storage.foldername(name))[1])::uuid,array['owner','admin']));
