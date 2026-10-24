@@ -40,6 +40,9 @@ export default function TenderRadarPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => { setNow(Date.now()); }, []);
 
   async function loadTenders(id: string) {
     const supabase = getSupabaseBrowserClient();
@@ -114,7 +117,7 @@ export default function TenderRadarPage() {
   }
 
   const visible = useMemo(() => tenders.filter(t => filter === "all" || (filter === "active" ? !["awarded","unsuccessful","cancelled","closed","no_bid"].includes(t.status) : t.status === filter)), [tenders, filter]);
-  const closingSoon = tenders.filter(t => t.closing_at && new Date(t.closing_at).getTime() >= Date.now() && new Date(t.closing_at).getTime() <= Date.now() + 7*86400000).length;
+  const closingSoon = now === null ? 0 : tenders.filter(t => t.closing_at && new Date(t.closing_at).getTime() >= now && new Date(t.closing_at).getTime() <= now + 7*86400000).length;
 
   return <main className="min-h-screen px-5 py-8 md:px-10">
     <div className="mx-auto max-w-7xl">
@@ -170,8 +173,8 @@ export default function TenderRadarPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 px-5 py-4"><h2 className="font-bold">Opportunity register</h2><select aria-label="Filter tenders" value={filter} onChange={e=>setFilter(e.target.value)} className="rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm"><option value="active">Active opportunities</option><option value="all">All records</option>{states.map(s=><option key={s} value={s}>{s.replaceAll("_"," ")}</option>)}</select></div>
           {visible.length === 0 ? <p className="p-6 text-slate-400">No opportunities match this filter.</p> : <div className="divide-y divide-slate-800">{visible.map(t=>{
             const closingMs = t.closing_at ? new Date(t.closing_at).getTime() : null;
-            const overdue = closingMs !== null && closingMs < Date.now() && !["submitted","awarded","unsuccessful","cancelled","closed"].includes(t.status);
-            const soon = closingMs !== null && closingMs >= Date.now() && closingMs <= Date.now()+7*86400000;
+            const overdue = now !== null && closingMs !== null && closingMs < now && !["submitted","awarded","unsuccessful","cancelled","closed"].includes(t.status);
+            const soon = now !== null && closingMs !== null && closingMs >= now && closingMs <= now+7*86400000;
             return <article key={t.id} className="grid gap-4 p-5 md:grid-cols-[1fr_220px]">
               <div><div className="flex flex-wrap items-center gap-2"><h3 className="font-bold">{t.title}</h3>{overdue && <span className="rounded-full bg-red-950 px-2 py-1 text-xs font-bold text-red-200">Overdue</span>}{soon && <span className="rounded-full bg-amber-950 px-2 py-1 text-xs font-bold text-amber-200">Closing soon</span>}</div>
                 <p className="mt-1 text-sm text-slate-400">{t.buyer_name || "Buyer not specified"} · {t.reference_number || "No reference"} · {t.province || "Province not set"}</p>
