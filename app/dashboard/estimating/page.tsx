@@ -9,6 +9,7 @@ type Row = { id: number; desc: string; unit: string; qty: number; material: numb
 type Company = { id: string; name: string };
 type Tender = { id: string; title: string };
 type SavedBOQ = { id: string; name: string; revision: number; status: string; created_at: string };
+type ReferenceRate = { id: string; description: string; unit: string; unit_rate: number; rate_type: string; effective_from: string; effective_to: string | null; rate_sources: { valid_until: string | null } | null };
 
 const seed: Row[] = [{ id: 1, desc: "Example BOQ item", unit: "m3", qty: 100, material: 0, labour: 0, plant: 0, subcontract: 0 }];
 
@@ -23,6 +24,7 @@ export default function Estimating() {
   const [tenders, setTenders] = useState<Tender[]>([]);
   const [tenderId, setTenderId] = useState("");
   const [saved, setSaved] = useState<SavedBOQ[]>([]);
+  const [referenceRates, setReferenceRates] = useState<ReferenceRate[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
@@ -33,9 +35,14 @@ export default function Estimating() {
 
   async function loadSaved(cid: string) {
     const supabase = getSupabaseBrowserClient();
-    const { data, error } = await supabase.from("boq_projects").select("id,name,revision,status,created_at").eq("company_id",cid).order("created_at",{ascending:false}).limit(20);
+    const [{data,error},{data:rateRows,error:rateError}] = await Promise.all([
+      supabase.from("boq_projects").select("id,name,revision,status,created_at").eq("company_id",cid).order("created_at",{ascending:false}).limit(20),
+      supabase.from("construction_rates").select("id,description,unit,unit_rate,rate_type,effective_from,effective_to,rate_sources(valid_until)").eq("company_id",cid).eq("rate_type","composite").order("effective_from",{ascending:false}).limit(500),
+    ]);
     if (error) throw error;
+    if (rateError) throw rateError;
     setSaved((data || []) as SavedBOQ[]);
+    setReferenceRates((rateRows || []) as unknown as ReferenceRate[]);
   }
 
   useEffect(() => {
@@ -63,6 +70,16 @@ export default function Estimating() {
     init();
     return () => { active = false; };
   }, [router]);
+
+  function referenceFor(row: Row): ReferenceRate | undefined {
+    const today = new Date().toISOString().slice(0,10);
+    return referenceRates.find(rate =>
+      rate.description.trim().toLowerCase() === row.desc.trim().toLowerCase() &&
+      rate.unit.trim().toLowerCase() === row.unit.trim().toLowerCase() &&
+      rate.effective_from <= today && (!rate.effective_to || rate.effective_to >= today) &&
+      (!rate.rate_sources?.valid_until || rate.rate_sources.valid_until >= today)
+    );
+  }
 
   function edit(id:number,k:keyof Row,v:string) {
     setRows(x=>x.map(r=>r.id===id?{...r,[k]:k==="desc"||k==="unit"?v:Math.max(0,Number(v)||0)}:r));
@@ -121,10 +138,12 @@ export default function Estimating() {
       <label className="text-sm font-semibold">Linked tender (optional)<select value={tenderId} onChange={e=>setTenderId(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-3"><option value="">Standalone estimate</option>{tenders.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
       <label className="text-sm font-semibold">Estimate name<input value={projectName} onChange={e=>setProjectName(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 p-3"/></label>
     </div>
-    <div className="mt-6 overflow-auto rounded-2xl border border-slate-700"><table className="w-full min-w-[1000px] text-sm"><thead className="bg-slate-900"><tr>{["Description","Unit","Qty","Material rate","Labour rate","Plant rate","Subcontract rate","Direct amount"].map(x=><th className="p-3 text-left" key={x}>{x}</th>)}</tr></thead><tbody>{rows.map(r=>{const rate=r.material+r.labour+r.plant+r.subcontract;return <tr className="border-t border-slate-800" key={r.id}><td className="p-2"><input aria-label="BOQ description" className="w-64 bg-transparent" value={r.desc} onChange={e=>edit(r.id,"desc",e.target.value)}/></td><td className="p-2"><input aria-label="Unit" className="w-16 bg-transparent" value={r.unit} onChange={e=>edit(r.id,"unit",e.target.value)}/></td>{(["qty","material","labour","plant","subcontract"] as const).map(k=><td className="p-2" key={k}><input aria-label={k} type="number" min="0" step="any" className="w-24 rounded bg-slate-950 p-2" value={r[k]} onChange={e=>edit(r.id,k,e.target.value)}/></td>)}<td className="p-3 font-bold">R {(r.qty*rate).toLocaleString("en-ZA",{maximumFractionDigits:2})}</td></tr>})}</tbody></table></div>
+    <div className="mt-6 overflow-auto rounded-2xl border border-slate-700"><table className="w-full min-w-[1000px] text-sm"><thead className="bg-slate-900"><tr>{["Description","Unit","Qty","Material rate","Labour rate","Plant rate","Subcontract rate","Direct amount","Reference check"].map(x=><th className="p-3 text-left" key={x}>{x}</th>)}</tr></thead><tbody>{rows.map(r=>{const rate=r.material+r.labour+r.plant+r.subcontract;return <tr className="border-t border-slate-800" key={r.id}><td className="p-2"><input aria-label="BOQ description" className="w-64 bg-transparent" value={r.desc} onChange={e=>edit(r.id,"desc",e.target.value)}/></td><td className="p-2"><input aria-label="Unit" className="w-16 bg-transparent" value={r.unit} onChange={e=>edit(r.id,"unit",e.target.value)}/></td>{(["qty","material","labour","plant","subcontract"] as const).map(k=><td className="p-2" key={k}><input aria-label={k} type="number" min="0" step="any" className="w-24 rounded bg-slate-950 p-2" value={r[k]} onChange={e=>edit(r.id,k,e.target.value)}/></td>)}<td className="p-3 font-bold">R {(r.qty*rate).toLocaleString("en-ZA",{maximumFractionDigits:2})}</td><td className="p-3">{(() => { const ref=referenceFor(r); if(!ref)return <span className="text-slate-500">No matching composite rate</span>; if(Number(ref.unit_rate)===0)return <span className="text-amber-300">Zero-rate reference · review</span>; const variance=((rate-Number(ref.unit_rate))/Number(ref.unit_rate))*100; return Math.abs(variance)>10?<span className="font-bold text-amber-300">{variance>0?"+":""}{variance.toFixed(1)}% variance vs R {Number(ref.unit_rate).toFixed(2)}</span>:<span className="text-sky-300">Within 10% of R {Number(ref.unit_rate).toFixed(2)}</span>; })()}</td></tr>})}</tbody></table></div>
     <div className="mt-4 flex flex-wrap gap-3"><button onClick={()=>setRows(x=>[...x,{id:Date.now(),desc:"New BOQ item",unit:"item",qty:1,material:0,labour:0,plant:0,subcontract:0}])} className="rounded-lg border border-slate-600 px-4 py-2 font-semibold">Add BOQ item</button><button disabled={saving||loading||!companyId} onClick={saveEstimate} className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-50">{saving?"Saving estimate…":"Save estimate to workspace"}</button></div>
+    <p className="mt-3 text-xs text-slate-500">Reference check compares exact description/unit matches against current composite rates from your company library. A variance over 10% is a review flag, not proof of an error.</p>
     <div className="mt-6 grid gap-4 md:grid-cols-4"><Metric title="Direct cost" value={direct}/><Control title="Overheads %" value={oh} setValue={setOh}/><Control title="Profit %" value={profit} setValue={setProfit}/><Metric title="Tender price estimate" value={tenderTotal}/></div>
     {notice&&<p role="status" className="mt-5 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-200">{notice}</p>}
+    <p className="mt-4 text-sm"><Link href="/dashboard/rates" className="font-semibold text-sky-300 underline">Open construction rate library →</Link></p>
     <section className="mt-8 rounded-2xl border border-slate-700 p-5"><h2 className="text-xl font-bold">Saved estimates</h2><p className="mt-1 text-sm text-slate-400">Latest estimates in this company workspace.</p>{loading?<p className="mt-4 text-slate-400">Loading saved estimates…</p>:saved.length===0?<p className="mt-4 text-slate-400">No saved BOQs yet.</p>:<div className="mt-4 divide-y divide-slate-800">{saved.map(p=><div key={p.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><p className="font-semibold">{p.name}</p><p className="mt-1 text-xs text-slate-400">Revision {p.revision} · {new Date(p.created_at).toLocaleString()}</p></div><span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-bold">{p.status}</span></div>)}</div>}</section>
     <div className="mt-6 rounded-xl border border-amber-900/70 bg-amber-950/30 p-4 text-sm text-amber-100">Pricing control: the saved BOQ records the component build-up and assumption note for each line. It does not certify market rates, replace QS review or automatically approve a tender.</div>
   </div></main>;
