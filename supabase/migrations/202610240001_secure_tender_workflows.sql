@@ -500,3 +500,77 @@ revoke all on function public.is_company_member(uuid) from public, anon;
 revoke all on function public.has_company_role(uuid,text[]) from public, anon;
 grant execute on function public.is_company_member(uuid) to authenticated;
 grant execute on function public.has_company_role(uuid,text[]) to authenticated;
+
+-- A company must always retain at least one owner.
+create or replace function public.guard_company_member_role_changes()
+returns trigger language plpgsql security definer set search_path = ''
+as $$
+declare caller_is_owner boolean;
+declare caller_is_admin boolean;
+declare creator_id uuid;
+declare remaining_owners integer;
+begin
+  select exists (
+    select 1 from public.company_members m
+    where m.company_id = new.company_id and m.user_id = (select auth.uid()) and m.role = 'owner'
+  ) into caller_is_owner;
+  select exists (
+    select 1 from public.company_members m
+    where m.company_id = new.company_id and m.user_id = (select auth.uid()) and m.role in ('owner','admin')
+  ) into caller_is_admin;
+
+  if tg_op = 'INSERT' then
+    select c.created_by into creator_id from public.companies c where c.id = new.company_id;
+    if new.role = 'owner' and not caller_is_owner
+       and not (new.user_id = (select auth.uid()) and creator_id = (select auth.uid())) then
+      raise exception 'Only an existing owner may grant owner role.';
+    end if;
+    if not caller_is_admin and not (new.user_id = (select auth.uid()) and creator_id = (select auth.uid()) and new.role = 'owner') then
+      raise exception 'Only a company owner or admin may add members.';
+    end if;
+    return new;
+  end if;
+
+  if new.company_id <> old.company_id or new.user_id <> old.user_id then
+    raise exception 'Company membership identity cannot be changed.';
+  end if;
+  if new.role is distinct from old.role then
+    if new.user_id = (select auth.uid()) and not caller_is_owner then
+      raise exception 'Members cannot change their own role.';
+    end if;
+    if new.role = 'owner' and not caller_is_owner then
+      raise exception 'Only an existing owner may grant owner role.';
+    end if;
+    if not caller_is_admin then
+      raise exception 'Only a company owner or admin may change member roles.';
+    end if;
+    if old.role = 'owner' and new.role <> 'owner' then
+      select count(*) into remaining_owners from public.company_members m
+      where m.company_id = old.company_id and m.role = 'owner' and m.user_id <> old.user_id;
+      if remaining_owners = 0 then
+        raise exception 'A company must retain at least one owner.';
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.prevent_last_company_owner_delete()
+returns trigger language plpgsql security definer set search_path = ''
+as $$
+declare remaining_owners integer;
+begin
+  if old.role = 'owner' then
+    select count(*) into remaining_owners from public.company_members m
+    where m.company_id = old.company_id and m.role = 'owner' and m.user_id <> old.user_id;
+    if remaining_owners = 0 then
+      raise exception 'A company must retain at least one owner.';
+    end if;
+  end if;
+  return old;
+end;
+$$;
+drop trigger if exists company_members_prevent_last_owner_delete on public.company_members;
+create trigger company_members_prevent_last_owner_delete before delete on public.company_members
+for each row execute function public.prevent_last_company_owner_delete();
