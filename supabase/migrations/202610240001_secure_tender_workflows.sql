@@ -481,3 +481,22 @@ using (public.has_company_role(company_id,array['owner','admin']));
 drop policy if exists "authors create draft proposals" on public.proposals;
 create policy "estimators create draft proposals" on public.proposals for insert to authenticated
 with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and created_by = (select auth.uid()) and status = 'draft');
+
+-- Explicit Data API privileges; row-level policies above remain the row-level authorization boundary.
+grant select, insert, update on public.companies to authenticated;
+grant select, insert, update, delete on public.company_members to authenticated;
+grant select, insert, update, delete on public.tenders to authenticated;
+grant select, insert, update, delete on public.eligibility_checks to authenticated;
+grant select, insert, update on public.documents to authenticated;
+grant select, insert, update on public.rate_sources to authenticated;
+grant select, insert, update, delete on public.construction_rates to authenticated;
+grant select, insert, update, delete on public.boq_projects to authenticated;
+grant select, insert, update, delete on public.boq_items to authenticated;
+grant select, insert, update on public.proposals to authenticated;
+grant select, insert, update on public.submissions to authenticated;
+grant select on public.tender_events to authenticated;
+
+revoke all on function public.is_company_member(uuid) from public, anon;
+revoke all on function public.has_company_role(uuid,text[]) from public, anon;
+grant execute on function public.is_company_member(uuid) to authenticated;
+grant execute on function public.has_company_role(uuid,text[]) to authenticated;
