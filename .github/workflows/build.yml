@@ -13,4 +13,9 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - name: Report production dependency audit
+        continue-on-error: true
+        run: |
+          npm audit --omit=dev --json > /tmp/tendergenie-audit.json || true
+          node -e 'const a=require("/tmp/tendergenie-audit.json"); console.log(JSON.stringify({summary:a.metadata?.vulnerabilities, packages:Object.entries(a.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,range:v.range,fixAvailable:v.fixAvailable}))},null,2))'
       - run: npm run build
