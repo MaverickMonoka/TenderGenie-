@@ -177,7 +177,8 @@ export default function DocumentsPage() {
       <Link href="/dashboard" className="text-sm font-semibold text-sky-300">← Workspace</Link>
       <p className="mt-6 text-xs font-bold uppercase tracking-[0.2em] text-sky-300">Private company vault</p>
       <h1 className="mt-2 text-3xl font-extrabold md:text-4xl">Document storage</h1>
-      <p className="mt-3 max-w-3xl text-slate-400">Files are stored in a private bucket, with company membership enforced by Storage policies. Downloads use short-lived signed URLs. This screen does not yet run OCR or compliance extraction.</p>
+      <p className="mt-3 max-w-3xl text-slate-400">Files are stored in a private bucket, with company membership enforced by Storage policies. Downloads use short-lived signed URLs. PDF extraction is user-triggered and the extracted fields always require human review.</p>
+      <p className="mt-3 max-w-3xl rounded-xl border border-amber-900/70 bg-amber-950/30 p-3 text-sm text-amber-100">Privacy notice: selecting “Extract PDF with AI” sends that PDF's contents to the OpenAI API configured by the application owner. Only process documents you are authorized to share with that service.</p>
       {loading ? <p className="mt-8 text-slate-400">Loading secure vault…</p> : companies.length === 0 ? <section className="mt-8 rounded-xl border border-slate-700 p-6"><p>No company profile found. Create one before uploading documents.</p><Link className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 font-bold" href="/dashboard/company">Create company profile</Link></section> : <>
         <section className="mt-8 rounded-2xl border border-slate-700 bg-slate-900/60 p-6">
           <div className="grid gap-4 md:grid-cols-3">
