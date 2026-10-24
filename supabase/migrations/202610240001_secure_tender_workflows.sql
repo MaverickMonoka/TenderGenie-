@@ -302,3 +302,125 @@ $$;
 drop trigger if exists tender_events_immutable on public.tender_events;
 create trigger tender_events_immutable before update or delete on public.tender_events
 for each row execute function public.prevent_tender_event_mutation();
+
+-- Tighten membership administration: admins cannot promote themselves or grant owner role.
+create or replace function public.guard_company_member_role_changes()
+returns trigger language plpgsql security definer set search_path = ''
+as $$
+declare caller_is_owner boolean;
+declare caller_is_admin boolean;
+declare creator_id uuid;
+begin
+  select exists (
+    select 1 from public.company_members m
+    where m.company_id = new.company_id and m.user_id = (select auth.uid()) and m.role = 'owner'
+  ) into caller_is_owner;
+  select exists (
+    select 1 from public.company_members m
+    where m.company_id = new.company_id and m.user_id = (select auth.uid()) and m.role in ('owner','admin')
+  ) into caller_is_admin;
+
+  if tg_op = 'INSERT' then
+    select c.created_by into creator_id from public.companies c where c.id = new.company_id;
+    if new.role = 'owner' and not caller_is_owner
+       and not (new.user_id = (select auth.uid()) and creator_id = (select auth.uid())) then
+      raise exception 'Only an existing owner may grant owner role.';
+    end if;
+    if not caller_is_admin and not (new.user_id = (select auth.uid()) and creator_id = (select auth.uid()) and new.role = 'owner') then
+      raise exception 'Only a company owner or admin may add members.';
+    end if;
+    return new;
+  end if;
+
+  if new.company_id <> old.company_id or new.user_id <> old.user_id then
+    raise exception 'Company membership identity cannot be changed.';
+  end if;
+  if new.role is distinct from old.role then
+    if new.user_id = (select auth.uid()) and not caller_is_owner then
+      raise exception 'Members cannot change their own role.';
+    end if;
+    if new.role = 'owner' and not caller_is_owner then
+      raise exception 'Only an existing owner may grant owner role.';
+    end if;
+    if not caller_is_admin then
+      raise exception 'Only a company owner or admin may change member roles.';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists company_members_guard_roles on public.company_members;
+create trigger company_members_guard_roles before insert or update on public.company_members
+for each row execute function public.guard_company_member_role_changes();
+
+-- The lifecycle trigger is the only client-visible source of tender status events.
+drop policy if exists "members append tender events" on public.tender_events;
+
+-- Do not allow clients to spoof the identity of a proposal approver or submitter.
+create or replace function public.guard_proposal_approval()
+returns trigger language plpgsql set search_path = ''
+as $$
+begin
+ if new.status in ('approved','locked') and old.status not in ('approved','locked') then
+   if new.approved_by is null or new.approved_at is null then
+     raise exception 'Proposal approval requires an approver and timestamp.';
+   end if;
+   if new.approved_by <> (select auth.uid()) then
+     raise exception 'The approving user must match the authenticated user.';
+   end if;
+ end if;
+ if new.status = 'locked' and new.locked_at is null then
+   raise exception 'Locking a proposal requires a locked timestamp.';
+ end if;
+ if old.status = 'locked' and new.status <> 'locked' then
+   raise exception 'Locked proposals are immutable; create a new version.';
+ end if;
+ return new;
+end;
+$$;
+
+create or replace function public.guard_submission_transition()
+returns trigger language plpgsql set search_path = ''
+as $$
+declare proposal_status text;
+begin
+ if tg_op = 'UPDATE' and old.status in ('submitted','receipt_confirmed','withdrawn','rejected') and new.status <> old.status then
+   raise exception 'A final submission state cannot be reopened; create a new submission record.';
+ end if;
+ if new.status = 'approved_to_submit' then
+   if new.approved_by is null or new.approved_at is null then
+     raise exception 'Submission approval requires an approver and timestamp.';
+   end if;
+   if new.approved_by <> (select auth.uid()) then
+     raise exception 'The approving user must match the authenticated user.';
+   end if;
+   select p.status into proposal_status from public.proposals p
+    where p.id = new.proposal_id and p.company_id = new.company_id;
+   if proposal_status not in ('approved','locked') then
+     raise exception 'Only an approved or locked proposal can be approved for submission.';
+   end if;
+ end if;
+ if new.status in ('submitted','receipt_confirmed') then
+   if new.submitted_by is null or new.submitted_at is null then
+     raise exception 'Submission requires the submitting user and timestamp.';
+   end if;
+   if new.submitted_by <> (select auth.uid()) then
+     raise exception 'The submitting user must match the authenticated user.';
+   end if;
+   if tg_op = 'INSERT' or old.status <> 'approved_to_submit' and old.status <> 'submitted' then
+     raise exception 'Submission must first be explicitly approved to submit.';
+   end if;
+ end if;
+ return new;
+end;
+$$;
+
+-- Restrict document metadata to read/create/update; delete only through a reviewed retention workflow.
+drop policy if exists "members manage documents" on public.documents;
+create policy "members read documents" on public.documents for select to authenticated
+using (public.is_company_member(company_id));
+create policy "members upload document metadata" on public.documents for insert to authenticated
+with check (public.is_company_member(company_id) and uploaded_by = (select auth.uid()));
+create policy "uploaders update document metadata" on public.documents for update to authenticated
+using (public.is_company_member(company_id) and uploaded_by = (select auth.uid()))
+with check (public.is_company_member(company_id) and uploaded_by = (select auth.uid()));
