@@ -166,3 +166,78 @@ on conflict (id) do update set public=false,file_size_limit=excluded.file_size_l
 create policy "company members read private tender files" on storage.objects for select to authenticated using (bucket_id='tender-documents' and public.is_company_member(((storage.foldername(name))[1])::uuid));
 create policy "company members upload private tender files" on storage.objects for insert to authenticated with check (bucket_id='tender-documents' and public.is_company_member(((storage.foldername(name))[1])::uuid));
 create policy "company admins delete private tender files" on storage.objects for delete to authenticated using (bucket_id='tender-documents' and public.has_company_role(((storage.foldername(name))[1])::uuid,array['owner','admin']));
+
+-- Enforce same-company references at the database layer (not only in application code).
+alter table public.tenders add constraint tenders_id_company_unique unique (id, company_id);
+alter table public.documents add constraint documents_id_company_unique unique (id, company_id);
+alter table public.rate_sources add constraint rate_sources_id_company_unique unique (id, company_id);
+alter table public.construction_rates add constraint construction_rates_id_company_unique unique (id, company_id);
+alter table public.boq_projects add constraint boq_projects_id_company_unique unique (id, company_id);
+alter table public.proposals add constraint proposals_id_company_unique unique (id, company_id);
+
+alter table public.documents add constraint documents_tender_same_company_fk
+ foreign key (tender_id, company_id) references public.tenders(id, company_id) on delete set null (tender_id);
+alter table public.eligibility_checks add constraint eligibility_tender_same_company_fk
+ foreign key (tender_id, company_id) references public.tenders(id, company_id) on delete cascade;
+alter table public.eligibility_checks add constraint eligibility_document_same_company_fk
+ foreign key (evidence_document_id, company_id) references public.documents(id, company_id) on delete set null (evidence_document_id);
+alter table public.rate_sources add constraint rate_source_document_same_company_fk
+ foreign key (document_id, company_id) references public.documents(id, company_id) on delete set null (document_id);
+alter table public.construction_rates add constraint construction_rate_source_same_company_fk
+ foreign key (rate_source_id, company_id) references public.rate_sources(id, company_id) on delete restrict;
+alter table public.boq_projects add constraint boq_tender_same_company_fk
+ foreign key (tender_id, company_id) references public.tenders(id, company_id) on delete set null (tender_id);
+alter table public.boq_items add constraint boq_project_same_company_fk
+ foreign key (boq_project_id, company_id) references public.boq_projects(id, company_id) on delete cascade;
+alter table public.boq_items add constraint boq_rate_same_company_fk
+ foreign key (rate_id, company_id) references public.construction_rates(id, company_id) on delete restrict;
+alter table public.boq_items add constraint boq_rate_source_same_company_fk
+ foreign key (rate_source_id, company_id) references public.rate_sources(id, company_id) on delete restrict;
+alter table public.proposals add constraint proposal_tender_same_company_fk
+ foreign key (tender_id, company_id) references public.tenders(id, company_id) on delete cascade;
+alter table public.proposals add constraint proposal_boq_same_company_fk
+ foreign key (boq_project_id, company_id) references public.boq_projects(id, company_id) on delete set null (boq_project_id);
+alter table public.proposals add constraint proposal_document_same_company_fk
+ foreign key (generated_document_id, company_id) references public.documents(id, company_id) on delete set null (generated_document_id);
+alter table public.submissions add constraint submission_tender_same_company_fk
+ foreign key (tender_id, company_id) references public.tenders(id, company_id) on delete cascade;
+alter table public.submissions add constraint submission_proposal_same_company_fk
+ foreign key (proposal_id, company_id) references public.proposals(id, company_id) on delete restrict;
+alter table public.submissions add constraint submission_receipt_same_company_fk
+ foreign key (receipt_document_id, company_id) references public.documents(id, company_id) on delete set null (receipt_document_id);
+alter table public.tender_events add constraint tender_event_same_company_fk
+ foreign key (tender_id, company_id) references public.tenders(id, company_id) on delete cascade;
+
+-- Submission transitions require an approved, locked proposal and explicit actor metadata.
+create or replace function public.guard_submission_transition()
+returns trigger language plpgsql set search_path = ''
+as $$
+declare proposal_status text;
+begin
+ if tg_op = 'UPDATE' and old.status in ('submitted','receipt_confirmed','withdrawn','rejected') and new.status <> old.status then
+   raise exception 'A final submission state cannot be reopened; create a new submission record.';
+ end if;
+ if new.status = 'approved_to_submit' then
+   if new.approved_by is null or new.approved_at is null then
+     raise exception 'Submission approval requires an approver and timestamp.';
+   end if;
+   select p.status into proposal_status from public.proposals p
+    where p.id = new.proposal_id and p.company_id = new.company_id;
+   if proposal_status not in ('approved','locked') then
+     raise exception 'Only an approved or locked proposal can be approved for submission.';
+   end if;
+ end if;
+ if new.status in ('submitted','receipt_confirmed') then
+   if new.submitted_by is null or new.submitted_at is null then
+     raise exception 'Submission requires the submitting user and timestamp.';
+   end if;
+   if tg_op = 'INSERT' or old.status <> 'approved_to_submit' and old.status <> 'submitted' then
+     raise exception 'Submission must first be explicitly approved to submit.';
+   end if;
+ end if;
+ return new;
+end;
+$$;
+drop trigger if exists submissions_guard_transition on public.submissions;
+create trigger submissions_guard_transition before insert or update on public.submissions
+for each row execute function public.guard_submission_transition();
