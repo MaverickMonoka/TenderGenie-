@@ -400,15 +400,23 @@ begin
      raise exception 'Only an approved or locked proposal can be approved for submission.';
    end if;
  end if;
- if new.status in ('submitted','receipt_confirmed') then
+ if new.status = 'submitted' then
    if new.submitted_by is null or new.submitted_at is null then
      raise exception 'Submission requires the submitting user and timestamp.';
    end if;
    if new.submitted_by <> (select auth.uid()) then
      raise exception 'The submitting user must match the authenticated user.';
    end if;
-   if tg_op = 'INSERT' or old.status <> 'approved_to_submit' and old.status <> 'submitted' then
+   if tg_op = 'INSERT' or old.status <> 'approved_to_submit' then
      raise exception 'Submission must first be explicitly approved to submit.';
+   end if;
+ end if;
+ if new.status = 'receipt_confirmed' then
+   if tg_op = 'INSERT' or old.status <> 'submitted' then
+     raise exception 'Receipt can only be confirmed after submission.';
+   end if;
+   if length(trim(coalesce(new.receipt_reference,''))) = 0 and new.receipt_document_id is null then
+     raise exception 'Receipt confirmation requires a receipt reference or receipt document.';
    end if;
  end if;
  return new;
