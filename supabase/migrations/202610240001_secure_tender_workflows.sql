@@ -153,9 +153,9 @@ create index if not exists rates_company_trade_region_idx on public.construction
 create index if not exists boq_items_project_idx on public.boq_items(boq_project_id);
 create index if not exists tender_events_tender_idx on public.tender_events(tender_id,created_at desc);
 
-create or replace function public.is_company_member(target_company uuid)
+create or replace function public.is_company_member(p_company_id uuid)
 returns boolean language sql stable security definer set search_path = ''
-as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid()) and m.status::text = 'active' and m.deleted_at is null); $$;
+as $ select exists (select 1 from public.company_members m where m.company_id = p_company_id and m.user_id = (select auth.uid()) and m.status::text = 'active' and m.deleted_at is null); $;
 create or replace function public.has_company_role(target_company uuid, allowed_roles text[])
 returns boolean language sql stable security definer set search_path = ''
 as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid()) and m.status::text = 'active' and m.deleted_at is null and (m.role::text = any(allowed_roles) or (m.role::text = 'bid_manager' and 'tender_manager' = any(allowed_roles)) or (m.role::text = 'technical_user' and 'estimator' = any(allowed_roles)))); $$;
