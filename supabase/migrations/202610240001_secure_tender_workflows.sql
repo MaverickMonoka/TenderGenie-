@@ -143,6 +143,9 @@ alter table public.boq_items
   add column if not exists rate_note text,
   add column if not exists calculated_amount numeric(18,2)
     generated always as (round(quantity * unit_rate, 2)) stored;
+alter table public.boq_items alter column tender_id drop not null;
+create unique index if not exists tenders_company_source_reference_unique
+  on public.tenders(company_id,source_name,reference_number);
 
 create index if not exists tenders_company_status_closing_idx on public.tenders(company_id,status,closing_at);
 create index if not exists documents_company_tender_idx on public.documents(company_id,tender_id,created_at desc);
@@ -152,10 +155,10 @@ create index if not exists tender_events_tender_idx on public.tender_events(tend
 
 create or replace function public.is_company_member(target_company uuid)
 returns boolean language sql stable security definer set search_path = ''
-as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid())); $$;
+as $ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid()) and m.status::text = 'active' and m.deleted_at is null); $;
 create or replace function public.has_company_role(target_company uuid, allowed_roles text[])
 returns boolean language sql stable security definer set search_path = ''
-as $$ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid()) and m.role::text = any(allowed_roles)); $$;
+as $ select exists (select 1 from public.company_members m where m.company_id = target_company and m.user_id = (select auth.uid()) and m.status::text = 'active' and m.deleted_at is null and (m.role::text = any(allowed_roles) or (m.role::text = 'bid_manager' and 'tender_manager' = any(allowed_roles)) or (m.role::text = 'technical_user' and 'estimator' = any(allowed_roles)))); $;
 create or replace function public.add_company_creator_as_owner()
 returns trigger language plpgsql security definer set search_path = ''
 as $$ begin insert into public.company_members(company_id,user_id,role) values (new.id,new.created_by,'owner') on conflict do nothing; return new; end; $$;
