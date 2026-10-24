@@ -574,3 +574,13 @@ $$;
 drop trigger if exists company_members_prevent_last_owner_delete on public.company_members;
 create trigger company_members_prevent_last_owner_delete before delete on public.company_members
 for each row execute function public.prevent_last_company_owner_delete();
+
+-- Separate construction-rate deletion from ordinary rate maintenance.
+drop policy if exists "estimators manage construction rates" on public.construction_rates;
+create policy "estimators insert construction rates" on public.construction_rates for insert to authenticated
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']) and created_by = (select auth.uid()));
+create policy "estimators update construction rates" on public.construction_rates for update to authenticated
+using (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']))
+with check (public.has_company_role(company_id,array['owner','admin','tender_manager','estimator']));
+create policy "admins delete construction rates" on public.construction_rates for delete to authenticated
+using (public.has_company_role(company_id,array['owner','admin']));
