@@ -28,9 +28,10 @@ export default function AuthPage() {
         });
         if (error) throw error;
         if (!data.session) {
-          setMessage("Account created. Check your email to confirm your address, then sign in.");
+          setMessage("Account created. Check your email to confirm your address, then sign in. Create your company profile after signing in.");
           return;
         }
+        if (!data.user) throw new Error("Authentication returned no user. Please sign in again.");
         if (companyName.trim()) {
           const { error: companyError } = await supabase.from("companies").insert({
             name: companyName.trim(),
