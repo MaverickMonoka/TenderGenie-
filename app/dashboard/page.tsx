@@ -3,6 +3,7 @@ import Link from "next/link";
 const modules = [
   { title: "Tender Radar", description: "Track opportunities, sources, eligibility and closing deadlines.", href: "/dashboard/tenders", label: "Open tender register" },
   { title: "QS & Estimating", description: "BOQs, cost build-ups, overheads, profit and commercial review.", href: "/dashboard/estimating", label: "Open estimator" },
+  { title: "Construction Rate Library", description: "Store ZAR rates with supplier quotes, historical sources, validity and assumptions.", href: "/dashboard/rates", label: "Manage sourced rates" },
   { title: "Compliance", description: "Review mandatory returnables, evidence and qualification decisions.", href: "/dashboard/compliance", label: "Open compliance" },
   { title: "Company Profile", description: "Manage registration, tax, CIDB, CSD and service categories.", href: "/dashboard/company", label: "Manage company" },
   { title: "Document Vault", description: "Store company evidence and tender documents privately.", href: "/dashboard/documents", label: "Open vault" },
