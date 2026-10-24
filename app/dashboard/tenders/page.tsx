@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-type Company = { id: string; name: string };
+type Company = { id: string; name: string; province: string | null; service_categories: string[] | null; cidb_categories: string[] | null; cidb_grade: string | null; csd_number: string | null; registration_number: string | null };
 type Tender = {
   id: string; company_id: string; source_name: string; source_url: string | null; reference_number: string | null;
   title: string; buyer_name: string | null; description: string | null; province: string | null; categories: string[];
@@ -55,7 +55,7 @@ export default function TenderRadarPage() {
         const supabase = getSupabaseBrowserClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) { router.replace("/auth"); return; }
-        const { data, error } = await supabase.from("companies").select("id,name").order("created_at", { ascending: true });
+        const { data, error } = await supabase.from("companies").select("id,name,province,service_categories,cidb_categories,cidb_grade,csd_number,registration_number").order("created_at", { ascending: true });
         if (error) throw error;
         if (!active) return;
         const list = (data || []) as Company[];
@@ -175,6 +175,13 @@ export default function TenderRadarPage() {
             return <article key={t.id} className="grid gap-4 p-5 md:grid-cols-[1fr_220px]">
               <div><div className="flex flex-wrap items-center gap-2"><h3 className="font-bold">{t.title}</h3>{overdue && <span className="rounded-full bg-red-950 px-2 py-1 text-xs font-bold text-red-200">Overdue</span>}{soon && <span className="rounded-full bg-amber-950 px-2 py-1 text-xs font-bold text-amber-200">Closing soon</span>}</div>
                 <p className="mt-1 text-sm text-slate-400">{t.buyer_name || "Buyer not specified"} · {t.reference_number || "No reference"} · {t.province || "Province not set"}</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  {#each [] as ignored}{/each}
+                  <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-200">Category: {(() => { const tenderCats=(t.categories||[]).map(x=>x.toLowerCase().trim()); const companyCats=[...(companies.find(c=>c.id===companyId)?.service_categories||[]),...(companies.find(c=>c.id===companyId)?.cidb_categories||[])].map(x=>x.toLowerCase().trim()); const matches=tenderCats.filter(x=>companyCats.includes(x)); return tenderCats.length===0?"Needs review":matches.length===0?"No direct match":matches.length===tenderCats.length?"Strong match":"Partial match"; })()}</span>
+                  <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-200">Province: {(() => { const cp=companies.find(c=>c.id===companyId)?.province; return !t.province||!cp?"Needs review":t.province.toLowerCase()==="national"||cp.toLowerCase()===t.province.toLowerCase()?"Aligned":"Different region"; })()}</span>
+                  <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-200">CSD: {companies.find(c=>c.id===companyId)?.csd_number?"Profile recorded":"Not recorded"}</span>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">Profile-based screening only—not a confirmed eligibility decision. Verify tender-specific CIDB, tax, briefing and mandatory returnable requirements.</p>
                 <p className="mt-3 text-sm">Closing: <strong>{dateLabel(t.closing_at)}</strong></p>
                 <p className="mt-1 text-sm text-slate-400">Clarification deadline: {dateLabel(t.clarification_deadline)}</p>
                 {t.source_url && <a href={t.source_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm text-sky-300 underline">Open source notice</a>}
