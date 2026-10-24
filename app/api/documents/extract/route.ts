@@ -48,7 +48,9 @@ export async function POST(request: NextRequest) {
 
     await supabase.from("documents").update({ extraction_status: "processing" }).eq("id", document.id);
 
-    const aiResponse = await fetch("https://api.openai.com/v1/responses", {
+    let aiResponse: Response;
+    try {
+      aiResponse = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { Authorization: `Bearer ${openAiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -63,7 +65,11 @@ export async function POST(request: NextRequest) {
         text: { format: { type: "json_object" } },
         max_output_tokens: 3000,
       }),
-    });
+      });
+    } catch {
+      await supabase.from("documents").update({ extraction_status: "failed" }).eq("id", document.id);
+      return NextResponse.json({ error: "Could not reach the configured AI service. The document was marked for retry." }, { status: 502 });
+    }
 
     if (!aiResponse.ok) {
       const detail = await aiResponse.text();
